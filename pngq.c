@@ -9,7 +9,9 @@ Solution by :
 
 
 #include <stdio.h>
-#include<string.h>
+#include <string.h>
+#include <stdlib.h>
+#include <arpa/inet.h> // for htonl() function
 
 //Types of chunks
 #define IHDR 1
@@ -123,15 +125,26 @@ unsigned int PNG_crc_check(struct chunk ch, int len){
 }
 
 
+// print the data chunk in the standard output in at line of at most 16 hexadecimal values (bytes)
+void print_dataChunk(unsigned char* data, unsigned int length){
+    int size=(length>4)?32:length; // print only the first 4 bytes of the data chunk (if the data chunk is less than 4 bytes, print all the data chunk
+
+    for(unsigned int i=0;i<size;i+=2){
+        printf("%c%c ",data[i],data[i+1]);
+    }
+    printf("\n");
+}
+
 // return 1 if the keyword is found in the format, 0 otherwise
 int find_format(const char* format,const char* keyword){
     return (strstr(format,keyword)!=0)?1:0;  //note : the keyword that are not defined in the pformat specification are ignored 
 }
 
 //Read IHDR data and print them to the standard output following the format defined by "pformat"
-void print_pformat(struct chunk* IHDR_ch, const char* pformat){
+//update the value of the struct pformat_output
+void print_pformat(const struct chunk* IHDR_ch, const char* pformat){
     //Reading IHDR_ch data
-    char* data=IHDR_ch->data;
+    unsigned char* data=IHDR_ch->data;
 
     //Checking what the format requires to print
 
@@ -203,7 +216,7 @@ void print_pformat(struct chunk* IHDR_ch, const char* pformat){
 
 }
 
-void print_cformat(struct chunk* ch, const char* cformat){
+void print_cformat(const struct chunk* ch, const char* cformat){
     //Print the information about the chunk in the specified format
     for(const char* p=cformat;*p!='\0';p++){
         switch(*p){
@@ -237,24 +250,20 @@ void print_cformat(struct chunk* ch, const char* cformat){
     }
 }
 
-// print the data chunk in the standard output in at line of at most 16 hexadecimal values (bytes)
-void print_dataChunk(unsigned char* data, unsigned int length){
-    int size=(length>4)?32:length; // print only the first 4 bytes of the data chunk (if the data chunk is less than 4 bytes, print all the data chunk
+void print_kformat(const struct chunk* ch, const char* cformat){
 
-    for(unsigned int i=0;i<size;i+=2){
-        printf("%c%c ",data[i],data[i+1]);
+
+    unsigned char keyword[79+1]; // + \0 space for the null terminator
+    
+    unsigned i =0;
+    for(;i<79 && ch->data[i]!='\0';i++){
+        keyword[i]=ch->data[i];
     }
-    printf("\n");
-}
+    keyword[i]='\0'; // add the null terminator to the keyword
 
-void print_cformat(struct chunk* ch, const char* cformat){
+    int keyword_length=i-1; // length of the keyword (excluding the null terminator
 
-
-    const char keyword[79+1];
-    strcpy(keyword,ch->data);
-    int keyword_length=strlen(keyword);
-
-    const char* text_string=ch->data+keyword_length+1;
+    const unsigned char* text_string=ch->data+keyword_length+1;
     int text_string_length=ch->length-keyword_length-1;
 
 
@@ -283,7 +292,42 @@ void print_cformat(struct chunk* ch, const char* cformat){
     }
 }
 
-void readPNGfile(FILE* png_file,const char* pformat,const char* cformat,const char* kformat){
+void print_info(struct chunk* chunks,const char * pformat,const char * cformat,const char * kformat){
+
+    unsigned int reading_chunk_group=IHDR; //define how to handle the chunk reading (IHDR, tEXt, etc...)
+
+
+    const struct chunk* p = chunks; // pointer to the current chunk
+    do{
+
+        if(strcmp((const char*)p->type,"IHDR")==0){
+            reading_chunk_group=IHDR;
+        }
+        else if(strcmp((const char*)p->type,"tEXt")==0){
+            reading_chunk_group=TEXT;
+        }
+        else{
+            reading_chunk_group=0;
+        }
+
+        switch (reading_chunk_group){
+        case IHDR:
+            print_pformat(p,pformat);
+            break;
+        case TEXT:
+            print_cformat(p,cformat);
+            break;
+        }
+
+        print_cformat(p,cformat);
+        p++;
+    }while(strcmp((const char*)p->type,"IEND")!=0); // loop until the IEND chunk is found"; 
+    //DOVREBBE ESSERE TUTTO CORRETTO
+
+}
+
+struct chunk* readPNGfile(FILE* png_file){
+
 
     // check if the PNG file is valid
     //PNG signature check
@@ -294,101 +338,122 @@ void readPNGfile(FILE* png_file,const char* pformat,const char* cformat,const ch
     if(fread(png_signature_read,8,1,png_file)!=1){
         printf("Error, can't read the PNG signature\n");
         fclose(png_file);
-        return;
+        return NULL;
     }
     //else reading operation was successful
 
     if(memcmp(png_signature,png_signature_read,8)!=0){
         printf("Error, the file is not a valid PNG file\n");
         fclose(png_file);
-        return;
+        return NULL;
     }
+
+
+    //Allocate memory for the array of chunks
+
+    unsigned int size=5; // initial size of the array of chunks
+    struct chunk* chunk_array=malloc(sizeof(struct chunk)*size); // allocate memory for the array of chunks
+
+    if(chunk_array!=NULL){
 
     //Reading the PNG file chunks
 
-    unsigned int reading_chunk_group=IHDR; //define how to handle the chunk reading (IHDR, tEXt, etc...)
 
+    unsigned i =0;
     while(!feof(png_file)){
+    struct chunk new_chunk;
     
-    struct chunk read_chunk={0,0,0,0,0};
-
-    // Read chunk information
+    /* Read chunk information */
 
     // Read the chunk length field
-    if(fread(&read_chunk.length,4,1,png_file)!=1){
+    if(fread(&new_chunk.length,4,1,png_file)!=1){
         printf("Error, can't read the chunk length field\n");
         fclose(png_file);
-        return;
+        free(chunk_array); //deallocate memory for the array of chunks
+        return NULL;
     }
+    new_chunk.length=htonl(new_chunk.length); // convert the chunk length field from network byte order to host byte order
     
     //Read the chunk type field
-    if(fread(read_chunk.type,4,1,png_file)!=1){ 
+    if(fread(new_chunk.type,4,1,png_file)!=1){ 
         printf("Error, can't read the chunk type field\n");
         fclose(png_file);
-        return;
+        free(chunk_array); //deallocate memory for the array of chunks
+        return NULL;
     } 
-
-
-    //Reading the IHDR chunk data
-    read_chunk.data = malloc(read_chunk.length); // allocate memory for the chunk data field
+    // new_chunk.type=htonl(new_chunk.type); // convert the chunk type field from network byte order to host byte order
+    
+    // fseek(png_file, 8, SEEK_CUR);
+    //Reading the chunk data
+    new_chunk.data = malloc(sizeof(unsigned char)*new_chunk.length); // allocate memory for the chunk data field
 
     //check if the memory allocation was successful
-    if(read_chunk.data==NULL){
+    if(new_chunk.data==NULL){
         printf("Error, can't allocate memory for the chunk data field\n");
         fclose(png_file);
-        return;
+        free(chunk_array); //deallocate memory for the array of chunks
+        return NULL;
     }
 
     //Read the chunk data field
-    if(fread(read_chunk.data,read_chunk.length,1,png_file)!=1){ // read the IHDR chunk data)
+    if(fread(new_chunk.data,sizeof(unsigned char),new_chunk.length,png_file)!=new_chunk.length){ // read the IHDR chunk data)
         printf("Error, can't read the chunk data field\n");
         fclose(png_file);
-        free(read_chunk.data); //deallocate memory for the chunk data field
-        return;
+        free(new_chunk.data); //deallocate memory for the chunk data field
+        free(chunk_array); //deallocate memory for the array of chunks
+
+        return NULL;
     } 
 
     //Reading the chunk CRC field
-    if(fread(&read_chunk.crc,4,1,png_file)!=1){
+    if(fread(&new_chunk.crc,4,1,png_file)!=1){
         printf("Error, can't read the chunk CRC field\n");
         fclose(png_file);
-        free(read_chunk.data); //deallocate memory for the chunk data field
-        return;
+        free(new_chunk.data); //deallocate memory for the chunk data field
+        free(chunk_array); //deallocate memory for the array of chunks
+        return NULL;
     }
+    new_chunk.crc=htonl(new_chunk.crc); // convert the chunk CRC field from network byte order to host byte order
     
     //Check if the CRC is correct
-    if(PNG_crc_check(read_chunk,4)!=read_chunk.crc){
+    if(PNG_crc_check(new_chunk,4)!=new_chunk.crc){
         printf("Error, the chunk CRC field is not correct\n");
         fclose(png_file);
-        free(read_chunk.data); //deallocate memory for the IHDR chunk data
-        return;
+        free(new_chunk.data); //deallocate memory for the IHDR chunk data
+        free(chunk_array); //deallocate memory for the array of chunks
+        return NULL;
     }
 
-    switch (reading_chunk_group){
-    case IHDR:
-        print_pformat(&read_chunk,pformat);
-        break;
-    case TEXT:
-        print_cformat(&read_chunk,cformat);
-        break;
+    chunk_array[i]=new_chunk;
+
+    i++;
+    //Reallocate memory for the array of chunks if needed
+    if(i>=size){
+        size*=2;
+        chunk_array=realloc(chunk_array,sizeof(struct chunk)*size);
     }
-
-    print_cformat(&read_chunk,cformat);
-
+        pformat_output._N+=1;
     }
  
+    }
 
-
+    return chunk_array;
 }
 
 
 int main(int argc, char* argv[]){
+
+    // argv[1]="1.png";
+    argv[1]="cat.png";
+    argc++;
+
     if(argc < 2){
         printf("Error, a PNG file name is required for %s \n.Try to use: %s [options] [--] file1 [[options] file2 . . . ]\n", argv[0],argv[0]);
         return 1;
     }
 
     
-    pformat_output; // struct to store the information about the PNG file in the specified format
+    // pformat_output; // struct to store the information about the PNG file in the specified format
 
     //Definition of the initial format values
     const char *pformat = default_pformat;
@@ -441,7 +506,18 @@ int main(int argc, char* argv[]){
 
         pformat_output._f = argv[i]; // set the file name in the pformat output struct
 
-        readPNGfile(png_file,pformat,cformat,kformat); // read the PNG file 
+        struct chunk* chunks =readPNGfile(png_file); // read the PNG file 
+
+        if(chunks==NULL){
+            printf("Error, can't read the PNG file %s\n",argv[i]);
+            continue;
+        }
+        //otherwise if everything was successful
+        //prin the chunks information following the formats
+        print_info(chunks,pformat,cformat,kformat);
+
+        free(chunks); // deallocate memory for the array of chunks
+        
 
 
         // reset the format values to the default values for the next PNG file
@@ -454,7 +530,7 @@ int main(int argc, char* argv[]){
 
     all_files:
     // loop through all the line arguments and process all files
-    for (i; i < argc; i++){
+    for (; i < argc; i++){
         png_file = fopen(argv[i],"rb"); // open the PNG file in read binary mode
         if(png_file == NULL){
             printf("Error, can't open the file %s\n",argv[i]);
