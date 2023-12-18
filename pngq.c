@@ -4,45 +4,50 @@ Systems Programming assignment : Reading Data from Portable Network Graphics Fil
 Write a C program named "pngq.c" that reads and extracts information from a Portable Network Graphic file (PNG).
 PNG format specifications are available on the W3C documentation : https://www.w3.org/TR/2023/CR-png-3-20230921/
 
-Solution by : 
+The program is able to read and extract information from PNG files passed as parameters of command line and what it does 
+is verifying the integrity and validity of PNG file looking for the PNG signature and checking if the CRC of each chunk is correct.
+In particular, it also controls that the IHDR chunk fields are valid.
+If all chunks of a PNG file are valid, the program prints the information about the PNG file in the specified formats (pformat,cformat,kformat).
+Note : the CRC algorithm I used is a readapted version based on the one implemented on the PNG format specifications website: https://www.w3.org/TR/2023/CR-png-3-20230921/#samplecrc
+
+Notes about the imported libraries:
+    - string.h : for the string manipulation functions
+    - stdlib.h : for the memory allocation functions (malloc, realloc, free)
+    - arpa/inet.h : for the htonl() function (for converting the network byte order to host byte order,which means little endian to big endian translation)
+    - ctype.h : for the isdigit() function call (to check if a character is a digit)
+
 */
 
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <arpa/inet.h> // for htonl() function
-
-//Types of chunks
-#define IHDR 1
-#define TEXT 2
+#include <arpa/inet.h>
+#include <ctype.h>
 
 
 /*
-    structs and global variables definitions
+    Structs and global variables definitions
 */
 
 // chunk PNG file struct definition
-
 struct chunk{
     unsigned int num;           // chunk number
-
     unsigned int length;        // length of chunk data field
     unsigned char type[4];      // chunk type field , it's values are restricted between 'A'-'Z' and 'a'-'z'
-    unsigned char* data;                 //chunk data field , the size depends on the chunk length field
+    unsigned char* data;        //chunk data field , the size depends on the chunk length field
     unsigned int crc;           // chunk checksum field
 };
 
-// define the color type enum
+//Define the color type enum used to store the possible color types of the PNG file
 enum colorType {Grayscale=0, Truecolour=2, Indexed=3, GrayscaleAlpha=4, TruecolourAlpha=6};
-//mapping between the color type enum and the color type string
+
+//Define a mapping between the color type enum and the color type string
 const char* colorTypeStrings[] = { "Grayscale", "", "Truecolour", "Indexed", "GrayscaleAlpha", "", "TruecolourAlpha" };
 
 
-// define the struct for the pformat output, used to store the information about the PNG file in the specified format
-struct pform_output{
-    unsigned int file_counter; // number of the current PNG file 
-
+//Define the struct for the pformat output, used to store the information about the PNG file in the specified format
+struct pf_output{
     char * _f; // file name
     unsigned int _w; // image width
     unsigned int _h; // image height
@@ -54,11 +59,10 @@ struct pform_output{
 
 } pformat_output;
 
-//Default formats definitions
+//Default formats declaration and initialization
 const char *default_pformat = "_f: _w x _h, _c, _d bits per sample, _N chunks\n_C";
 const char *default_cformat = "\t_n: _t (_l)\n";
 const char *default_kformat = "\t_k: _t\n";
-
 
 /*
     CRC32 algorithm
@@ -107,13 +111,6 @@ unsigned long update_crc(unsigned long crc, unsigned char *buf,
   return c;
 }
 
-/* Return the CRC of the bytes buf[0..len-1]. */
-unsigned long crc(unsigned char *buf, int len)
-{
-  return update_crc(0xffffffffL, buf, len) ^ 0xffffffffL;
-}
-
-
 // check if the CRC of a chunk is correct using the chunk type field and the chunk data field 
 unsigned int PNG_crc_check(struct chunk ch, int len){
     unsigned long crc = 0xffffffffL;
@@ -128,31 +125,24 @@ unsigned int PNG_crc_check(struct chunk ch, int len){
     return crc ^ 0xffffffffL;
 }
 
-
-//TODO: DA TESTARE
-
-// print the data chunk in the standard output in at line of at most 16 hexadecimal values (bytes)
+//Print the data chunk on the standard output in at line of at most 16 hexadecimal values (bytes)
 void print_dataChunk(unsigned char* data, unsigned int length){
 
-    int size=(length>16)?16:length; // print only the first 4 bytes of the data chunk (if the data chunk is less than 4 bytes, print all the data chunk
+    int size=(length>16)?16:length; // print only the "length" bytes of the data chunk or at most 16 bytes
 
     for(unsigned int i=0;i<size;i++){
         printf("%x ",data[i]);
     }
 }
 
-// return 1 if the keyword is found in the format, 0 otherwise
-int find_format(const char* format,const char* keyword){
-    return (strstr(format,keyword)!=0)?1:0;  //note : the keyword that are not defined in the pformat specification are ignored 
-}
+//Read IHDR data, update the value of the struct "pformat_output" for the printing and,finally,
+//print the information contained in that struct to the standard output according to the format defined by "pformat"
 
-//Read IHDR data and print them to the standard output following the format defined by "pformat"
-//update the value of the struct pformat_output
-void print_pformat(const struct chunk* IHDR_ch, const char* pformat){
+int print_pformat(const struct chunk* IHDR_ch, const char* pformat){
     //Reading IHDR_ch data
     unsigned char* data=IHDR_ch->data;
 
-    //Checking what the format requires to print
+    //Save the image width, height, bit depth and color type in the pformat_output struct
 
     //Reading the image width 
     pformat_output._w=(unsigned int)data[0] << 24 | (unsigned int)data[1] << 16 | (unsigned int)data[2] << 8 
@@ -160,18 +150,27 @@ void print_pformat(const struct chunk* IHDR_ch, const char* pformat){
 
     //Reading the image height
      pformat_output._h=(unsigned int)data[4] << 24 | (unsigned int)data[5] << 16 | (unsigned int)data[6] << 8 
-    | (unsigned int)data[7];
+    | (unsigned int)data[7]; // convert the image width from network byte order to host byte order (little endian to big endian)
 
     //Reading the image bit depth
     pformat_output._d=data[8];
 
     //Reading the image color type
-
     pformat_output._c=data[9];
-
-    //Increment the number of chunks of the PNG file
     
+    //Mapping the color type value to its corresponding string
+    const char* color_type_str=colorTypeStrings[pformat_output._c];
 
+    //Check if the color type is valid 
+    //Analyze if the bit depth field value assumes a valid number for the PNG image color type
+    //For more information about this checking are available on the PNG format specifications website: https://www.w3.org/TR/2023/CR-png-3-20230921/#table111
+    if((strcmp(color_type_str,"Greyscale") && !(pformat_output._d==1 || pformat_output._d==2 || pformat_output._d==4 || pformat_output._d==8|| pformat_output._d==16))
+    || (strcmp(color_type_str,"Truecolour") && !(pformat_output._d==8|| pformat_output._d==16))
+    || (strcmp(color_type_str,"Indexed") && !(pformat_output._d==1 || pformat_output._d==2 || pformat_output._d==4 || pformat_output._d==8))
+    || (strcmp(color_type_str,"GreyscaleAlpha") && !(pformat_output._d==8|| pformat_output._d==16))
+    || (strcmp(color_type_str,"TruecolourAlpha") && !(pformat_output._d==8|| pformat_output._d==16))){
+        return -1;
+    }
 
     //Print the information about the PNG file in the specified format
     for(const char* p=pformat;*p!='\0';p++){
@@ -180,47 +179,46 @@ void print_pformat(const struct chunk* IHDR_ch, const char* pformat){
                 p++;
                 switch(*p){
                     case 'f':
-                        printf("%s",pformat_output._f);
+                        printf("%s",pformat_output._f); //print the file name
                         break;
                     case 'w':
-                        printf("%u",pformat_output._w);
+                        printf("%u",pformat_output._w); //print the image width
                         break;
                     case 'h':
-                        printf("%u",pformat_output._h);
+                        printf("%u",pformat_output._h); //print the image height
                         break;
                     case 'd':
-                        printf("%u",pformat_output._d);
+                        printf("%u",pformat_output._d); //print the image bit depth
                         break;
                     case 'c':
-                        printf("%s",colorTypeStrings[pformat_output._c]);
+                        printf("%s",colorTypeStrings[pformat_output._c]); //print the image color type string
                         break;
                     case 'N':
-                        printf("%u",pformat_output._N);
+                        printf("%u",pformat_output._N); //print the number of chunks of the PNG file
                         break;
                     case 'C':
-                        pformat_output._C=1;
+                        pformat_output._C=1; //set the flag to 1 to indicate that the chunks information must be printed
                         break;
                     case 'K':
-                        pformat_output._K=1;
+                        pformat_output._K=1; //set the flag to 1 to indicate that the keywords and corrisponding text of the tEXt chunks must be printed
                         break;
 
                     default: //ignore the keyword that are not defined in the pformat specification
-                        // printf("_%c",*p);
                         break;
                 }
                 break;
-            case '\'':
-                break;
             default:
-                printf("%c",*p);
+                printf("%c",*p); //print the character
                 break;
         }
     }
 
-
+    return 0;
 }
 
+//Print the information about the chunk in the specified format specified by "cformat"
 void print_cformat(const struct chunk* ch, const char* cformat){
+
     //Print the information about the chunk in the specified format
     for(const char* p=cformat;*p!='\0';p++){
         switch(*p){
@@ -228,89 +226,84 @@ void print_cformat(const struct chunk* ch, const char* cformat){
                 p++;
                 switch(*p){
                     case 'n':
-                        printf("%u",ch->num);
+                        printf("%u",ch->num); // print the chunk number
                         break;
                     case 't':
-                        printf("%.4s",ch->type);
+                        printf("%.4s",ch->type); // print the chunk type string
                         break;
                     case 'l':
-                        printf("%u",ch->length);
+                        printf("%u",ch->length); // print the chunk length
                         break;
                     case 'c':
-                        printf("%u",ch->crc);
+                        printf("%x",ch->crc); // print the chunk CRC
                         break;
                     case 'D':
                         print_dataChunk(ch->data,ch->length); // print the data chunk
                         break;
-                    default:
+                    default: //ignore the keyword that are not defined in the pformat specification
                         break;
                 }
                 break;
-            case '\'':
-                break;
             default:
-                printf("%c",*p);
+                printf("%c",*p); //print the character
                 break;
         }
     }
 }
 
+//Print the keyword and the text string of the tEXt chunk in the specified format specified by "kformat"
 void print_kformat(const struct chunk* ch, const char* cformat){
 
+    //Declare the Keyword characters array in which is also included the Null separator byte space for the null terminator
+    unsigned char keyword[79+1]; 
 
-    unsigned char keyword[79+1]; // + \0 space for the null terminator
-    
+    //Copy the keyword from the chunk data field to the keyword array
     unsigned i =0;
     for(;i<79 && ch->data[i]!='\0';i++){
         keyword[i]=ch->data[i];
     }
     keyword[i]='\0'; // add the null terminator to the keyword
 
-    int keyword_length=i; // length of the keyword (excluding the null terminator
+    int keyword_length=i; // length of the keyword
 
+    //Declare the Text string characters array and its length
     const unsigned char* text_string=ch->data+keyword_length+1;
     int text_string_length=ch->length-keyword_length-1;
 
-
-     
     //Print the information about the tEXt chunk in the specified format
     for(const char* p=cformat;*p!='\0';p++){
         switch(*p){
             case '_':
                 p++;
                 switch(*p){
-                    case 'k': // print the keyword
-                        printf("%.*s",keyword_length,keyword);
+                    case 'k': 
+                        printf("%.*s",keyword_length,keyword); // print the keyword
                         break;
-                    case 't': // print the text string
-                        printf("%.*s",text_string_length,text_string);
+                    case 't': 
+                        printf("%.*s",text_string_length,text_string); // print the text string
                         break;
 
-                    default:
+                    default: //ignore the keyword that are not defined in the pformat specification
                         break;
                 }
                 break;
-            case '\'':
-                break;
             default:
-                printf("%c",*p);
+                printf("%c",*p); //print the character
                 break;
         }
     }
 }
-
-void print_info(struct chunk* chunks,const char * pformat,const char * cformat,const char * kformat){
-
-    unsigned int reading_chunk_group=IHDR; //define how to handle the chunk reading (IHDR, tEXt, etc...)
-
+//Print the information about the PNG file in the specified formats (pformat,cformat,kformat)
+int print_info(struct chunk* chunks,const char * pformat,const char * cformat,const char * kformat){
 
     const struct chunk* p = chunks;
+    int flag=0; // flag to check if the IHDR chunk fields are valid
 
-
+    //Print the chunk information 
     for(int i =0; i < pformat_output._N; i++,p++){
         
         if(memcmp(p->type,"IHDR",4)==0){
-            print_pformat(p,pformat); //print the IHDR chunk information following the format "pformat"
+            flag=print_pformat(p,pformat); //print the IHDR chunk information following the format "pformat"
         }
 
         if(pformat_output._C){
@@ -321,16 +314,17 @@ void print_info(struct chunk* chunks,const char * pformat,const char * cformat,c
         }
     }
 
+    return flag;
+
 
 
 }
 
-        print_cformat(p,cformat);
-
-// deallocate memory for the array of chunks and close the PNG file in case of error
+//Close the PNG file and deallocate memory for the array of chunks
 struct chunk* dealloc_mem(FILE* png_file,struct chunk* chunks_array){
+    //Close the PNG file
     fclose(png_file);
-    // Deallocate memory for the data field of each chunk
+    //Deallocate memory allocated before with the "malloc" and "realloc" functions
     for (int i = 0; i < pformat_output._N; i++) {
         free(chunks_array[i].data);
     }
@@ -341,22 +335,23 @@ struct chunk* dealloc_mem(FILE* png_file,struct chunk* chunks_array){
 }
 
 
-//funzionante al 100%
+//Read the PNG file and return an array of chunks if the PNG file is valid, otherwise return NULL
 struct chunk* readPNGfile(FILE* png_file){
 
-    // check if the PNG file is valid
+    //Check if the PNG file is valid
+
     //PNG signature check
     const unsigned char png_signature[8] = {0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A}; // PNG signature
     unsigned char png_signature_read[8]; // PNG signature read from the PNG file
     
-    // read the PNG signature from the PNG file
+    //Read the PNG signature from the PNG file
     if(fread(png_signature_read,8,1,png_file)!=1){
         printf("Error, can't read the PNG signature\n");
         fclose(png_file);
         return NULL;
     }
-    //else reading operation was successful
 
+    //Check if the PNG signature is correct
     if(memcmp(png_signature,png_signature_read,8)!=0){
         printf("Error, the file is not a valid PNG file\n");
         fclose(png_file);
@@ -365,7 +360,6 @@ struct chunk* readPNGfile(FILE* png_file){
 
 
     //Allocate memory for the array of chunks
-
     unsigned int size=5; // initial size of the array of chunks
     struct chunk* chunk_array=malloc(sizeof(struct chunk)*size); // allocate memory for the array of chunks
 
@@ -398,11 +392,18 @@ struct chunk* readPNGfile(FILE* png_file){
             return dealloc_mem(png_file,chunk_array);
         } 
 
-    
-    //Reading the chunk data
+        //Check if the chunk type field is valid
+        for(unsigned i =0;i<4;i++){
+            if(!((new_chunk.type[i]>='A' && new_chunk.type[i]<= 'Z') || (new_chunk.type[i]>= 'a' && new_chunk.type[i]<= 'z') || isdigit(new_chunk.data[i]))){
+                printf("Error, the chunk type field is not valid\n");
+                return dealloc_mem(png_file,chunk_array);
+            }
+        }
+        
+        //Reading the chunk data
         new_chunk.data = malloc(sizeof(unsigned char)*new_chunk.length); // allocate memory for the chunk data field
 
-        //check if the memory allocation was successful
+        //Check if the memory allocation was successful
         if(new_chunk.data==NULL){
             printf("Error, can't allocate memory for the chunk data field\n");
             return dealloc_mem(png_file,chunk_array);
@@ -415,7 +416,6 @@ struct chunk* readPNGfile(FILE* png_file){
             printf("Error, can't read the chunk data field\n");
             return dealloc_mem(png_file,chunk_array);
         } 
-
 
         //Reading the chunk CRC field
         if(fread(&new_chunk.crc,4,1,png_file)!=1){
@@ -457,24 +457,18 @@ struct chunk* readPNGfile(FILE* png_file){
 
 
 int main(int argc, char* argv[]){
-
-    // argv[1]="1.png";
-    argv[1]="cat.png";
-    argc++;
-
     if(argc < 2){
         printf("Error, a PNG file name is required for %s \n.Try to use: %s [options] [--] file1 [[options] file2 . . . ]\n", argv[0],argv[0]);
         return 1;
     }
 
-    
-    memset(&pformat_output, 0, sizeof(pformat_output)); // struct to store the information about the PNG file in the specified format
+    //Set to default values struct to store the information about the PNG file in the specified format
+    memset(&pformat_output, 0, sizeof(pformat_output)); 
     
     //Definition of the initial format values
     const char *pformat = default_pformat;
     const char *cformat = default_cformat;
     const char *kformat = default_kformat;
-
 
     FILE* png_file; // pointer to the PNG file
 
@@ -482,8 +476,6 @@ int main(int argc, char* argv[]){
     unsigned int i; // loop counter
 
     int read_a_file=0; // flag to check if a PNG file is read used to flag the unique presence of "--" in the command lines
-
-
 
     // loop through all the line arguments
     for (i = 1; i < argc; i++){
@@ -500,32 +492,32 @@ int main(int argc, char* argv[]){
             }
         }
 
-        //update the reference to the format values
+        //Update the reference to the format values
 
-        // check if the argument is the optional parameter "p=" for setting up the "pformat" value
+        //Check if the argument is the optional parameter "p=" for setting up the "pformat" value
         if(strncmp(argv[i],"p=",2)==0){
-            pformat = argv[i]+2; // set the "pformat" value to the format specified in the argument
+            pformat = argv[i]+3; // set the "pformat" value to the format specified in the argument
+            argv[strlen(argv[i])-1]='\0'; // remove the last character of the "pformat" value (which is a single quote)
             continue;
         }
         if(strncmp(argv[i],"c=",2)==0){
-            cformat = argv[i]+2; // set the "cformat" value to the format specified in the argument
+            cformat = argv[i]+3; // set the "cformat" value to the format specified in the argument
+            argv[strlen(argv[i])-1]='\0'; // remove the last character of the "cformat" value (which is a single quote)
             continue;
         }
         if(strncmp(argv[i],"k=",2)==0){
-            kformat = argv[i]+2; // set the "kformat" value to the format specified in the argument
+            kformat = argv[i]+3; // set the "kformat" value to the format specified in the argument
+            argv[strlen(argv[i])-1]='\0'; // remove the last character of the "kformat" value (which is a single quote)
             continue;
         }
 
-        // read the PNG file name
-        //TODO : implement function given the multiple equals lines of code
-        
+        // read the PNG file name        
         png_file = fopen(argv[i],"rb"); // open the PNG file in read binary mode
         if(png_file == NULL){
             printf("Error, can't open the file %s\n",argv[i]);
             continue;
         }
         read_a_file=1; // set the flag to 1 to indicate that a PNG file is read and the "--" parameter is not allowed anymore
-        pformat_output.file_counter = i; // set the file counter in the pformat output struct
 
         pformat_output._f = argv[i]; // set the file name in the pformat output struct
 
@@ -535,19 +527,13 @@ int main(int argc, char* argv[]){
             printf("Error, can't read the PNG file %s\n",argv[i]);
             continue;
         }
-        //otherwise if everything was successful
-        //prin the chunks information following the formats
-        print_info(chunks,pformat,cformat,kformat);
+        //print the chunks information following the formats
+        if(print_info(chunks,pformat,cformat,kformat)==-1){
+            printf("Error, the bit depth field value is not valid for the color type field value for the PNG file %s\n",pformat_output._f);
+        }
 
         dealloc_mem(png_file,chunks); // deallocate memory for the array of chunks and close the file
-        
-
-
-        // reset the format values to the default values for the next PNG file
-        pformat = default_pformat;
-        cformat = default_cformat;
-        kformat = default_kformat;
-
+    
         memset(&pformat_output, 0, sizeof(pformat_output)); // reset the pformat_output struct to the default values
     }
 
@@ -561,7 +547,7 @@ int main(int argc, char* argv[]){
             printf("Error, can't open the file %s\n",argv[i]);
             continue;
         }
-        pformat_output.file_counter = i; // set the file counter in the pformat output struct
+
         pformat_output._f = argv[i]; // set the file name in the pformat output struct
         struct chunk* chunks =readPNGfile(png_file); // read the PNG file 
 
@@ -571,14 +557,11 @@ int main(int argc, char* argv[]){
         }
 
         //print the chunks information following the formats
-        print_info(chunks,pformat,cformat,kformat);
+        if(print_info(chunks,pformat,cformat,kformat)==-1){ // in case of error
+            printf("Error, the bit depth field value is not valid for the color type field value for the PNG file %s\n",pformat_output._f);
+        }
 
         dealloc_mem(png_file,chunks); // deallocate memory for the array of chunks and close the file
-
-        // reset the format values to the default values for the next PNG file
-        pformat = default_pformat;
-        cformat = default_cformat;
-        kformat = default_kformat;
 
         memset(&pformat_output, 0, sizeof(pformat_output)); // set the pformat_output struct to the default values*/
 
