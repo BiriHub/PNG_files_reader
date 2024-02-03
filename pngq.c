@@ -16,6 +16,7 @@ Notes about the imported libraries:
     - arpa/inet.h : for the htonl() function (for converting the network byte order to host byte order,which means little endian to big endian translation)
     - ctype.h : for the isdigit() function call (to check if a character is a digit)
 
+Solution by : Birindelli Leonardo
 */
 
 
@@ -40,10 +41,10 @@ struct chunk{
 };
 
 //Define the color type enum used to store the possible color types of the PNG file
-enum colorType {Grayscale=0, Truecolour=2, Indexed=3, GrayscaleAlpha=4, TruecolourAlpha=6};
+enum colorType {Greyscale=0, Truecolour=2, Indexed=3, GreyscaleAlpha=4, TruecolourAlpha=6};
 
 //Define a mapping between the color type enum and the color type string
-const char* colorTypeStrings[] = { "Grayscale", "", "Truecolour", "Indexed", "GrayscaleAlpha", "", "TruecolourAlpha" };
+const char* colorTypeStrings[] = { "Greyscale", "", "Truecolor", "Indexed", "Greyscale+alpha", "", "Truecolor+alpha" };
 
 
 //Define the struct for the pformat output, used to store the information about the PNG file in the specified format
@@ -127,11 +128,18 @@ unsigned int PNG_crc_check(struct chunk ch, int len){
 
 //Print the data chunk on the standard output in at line of at most 16 hexadecimal values (bytes)
 void print_dataChunk(unsigned char* data, unsigned int length){
+    if(length==0)
+        putchar('\n');
 
-    int size=(length>16)?16:length; // print only the "length" bytes of the data chunk or at most 16 bytes
-
-    for(unsigned int i=0;i<size;i++){
-        printf("%x ",data[i]);
+    for(int i=0;i<length;i++){
+        // printf("%02x ",data[i]);
+        if(data[i] < 0x10)
+            printf(" %x ",data[i]);
+        else 
+            printf("%x ",data[i]);
+        if((i+1)%16==0 && i+1<length){
+            putchar('\n');
+        }
     }
 }
 
@@ -164,17 +172,38 @@ int print_pformat(const struct chunk* IHDR_ch, const char* pformat){
     //Check if the color type is valid 
     //Analyze if the bit depth field value assumes a valid number for the PNG image color type
     //For more information about this checking are available on the PNG format specifications website: https://www.w3.org/TR/2023/CR-png-3-20230921/#table111
-    if((strcmp(color_type_str,"Greyscale") && !(pformat_output._d==1 || pformat_output._d==2 || pformat_output._d==4 || pformat_output._d==8|| pformat_output._d==16))
-    || (strcmp(color_type_str,"Truecolour") && !(pformat_output._d==8|| pformat_output._d==16))
-    || (strcmp(color_type_str,"Indexed") && !(pformat_output._d==1 || pformat_output._d==2 || pformat_output._d==4 || pformat_output._d==8))
-    || (strcmp(color_type_str,"GreyscaleAlpha") && !(pformat_output._d==8|| pformat_output._d==16))
-    || (strcmp(color_type_str,"TruecolourAlpha") && !(pformat_output._d==8|| pformat_output._d==16))){
-        return -1;
+    switch (pformat_output._c){
+    case 0: //Greyscale
+        if(!(pformat_output._d==1 || pformat_output._d==2 || pformat_output._d==4 || pformat_output._d==8|| pformat_output._d==16))
+            return -1;
+        break;
+    case 2: //Truecolour
+        if(!(pformat_output._d==8|| pformat_output._d==16))
+            return -1;
+        break;
+    case 3: //Indexed
+        if(!(pformat_output._d==1 || pformat_output._d==2 || pformat_output._d==4 || pformat_output._d==8))
+            return -1;
+        break;
+    case 4: //GreyscaleAlpha
+        if(!(pformat_output._d==8|| pformat_output._d==16))
+            return -1;
+        break;
+    case 6: //TruecolourAlpha
+        if(!(pformat_output._d==8|| pformat_output._d==16))
+            return -1;
+        break;
+    default:
+        break;
     }
 
     //Print the information about the PNG file in the specified format
     for(const char* p=pformat;*p!='\0';p++){
         switch(*p){
+            case '\n':
+                if(strcmp(p+1,"_K")!=0)
+                    printf("\n"); //print the new line character
+                break;
             case '_':
                 p++;
                 switch(*p){
@@ -235,7 +264,7 @@ void print_cformat(const struct chunk* ch, const char* cformat){
                         printf("%u",ch->length); // print the chunk length
                         break;
                     case 'c':
-                        printf("%x",ch->crc); // print the chunk CRC
+                        printf("%u",ch->crc); // print the chunk CRC
                         break;
                     case 'D':
                         print_dataChunk(ch->data,ch->length); // print the data chunk
@@ -376,7 +405,7 @@ struct chunk* readPNGfile(FILE* png_file){
         struct chunk new_chunk;
 
         //Assign the chunk number to the new chunk
-        new_chunk.num=i;
+        new_chunk.num=i+1;
         
         // Read the chunk length field
         if(fread(&new_chunk.length,4,1,png_file)!=1){
@@ -471,7 +500,6 @@ int main(int argc, char* argv[]){
     const char *kformat = default_kformat;
 
     FILE* png_file; // pointer to the PNG file
-
     
     unsigned int i; // loop counter
 
@@ -496,17 +524,17 @@ int main(int argc, char* argv[]){
 
         //Check if the argument is the optional parameter "p=" for setting up the "pformat" value
         if(strncmp(argv[i],"p=",2)==0){
-            pformat = argv[i]+3; // set the "pformat" value to the format specified in the argument
+            pformat = argv[i]+2; // set the "pformat" value to the format specified in the argument
             argv[strlen(argv[i])-1]='\0'; // remove the last character of the "pformat" value (which is a single quote)
             continue;
         }
         if(strncmp(argv[i],"c=",2)==0){
-            cformat = argv[i]+3; // set the "cformat" value to the format specified in the argument
+            cformat = argv[i]+2; // set the "cformat" value to the format specified in the argument
             argv[strlen(argv[i])-1]='\0'; // remove the last character of the "cformat" value (which is a single quote)
             continue;
         }
         if(strncmp(argv[i],"k=",2)==0){
-            kformat = argv[i]+3; // set the "kformat" value to the format specified in the argument
+            kformat = argv[i]+2; // set the "kformat" value to the format specified in the argument
             argv[strlen(argv[i])-1]='\0'; // remove the last character of the "kformat" value (which is a single quote)
             continue;
         }
