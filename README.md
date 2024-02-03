@@ -4,5 +4,4 @@ The program called '**pngq.c**' reads and extracts information from one or more 
 If all chunks of a PNG file are conform with the specification described on the [W3C documentation of the PNG format](https://www.w3.org/TR/png-3/), the program prints the information about the file in the specified formats (pformat,cformat,kformat).
 
 > [!NOTE]
-> In order to compile the code, I recomend to compile with the gcc-11 compiler 
-> I used the gcc version 11.4.0
+> In order to compile the code, I recomend to compile with the **gcc-11 compiler**
