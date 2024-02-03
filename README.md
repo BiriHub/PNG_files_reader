@@ -6,4 +6,3 @@ If all chunks of a PNG file are conform with the specification described on the 
 > [!NOTE]
 > In order to compile the code, I recomend to compile with the gcc-11 compiler 
 > I used the gcc version 11.4.0
-
